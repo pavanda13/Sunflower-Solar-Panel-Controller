@@ -22,7 +22,7 @@ RTC_DS3231 rtc;
 #define IN1        18
 #define IN2        16
 #define ENA        17
-#define SERVO_PIN  26
+#define SERVO_PIN  25
 
 /* ================= CALIBRATION ================= */
 constexpr float ADC_SCALE = 3.3f / 4095.0f;
@@ -32,8 +32,8 @@ float ACS_OFFSET = 2.5f;
 float ACS_SENS   = 0.066f;
 
 /* ================= TIMINGS ================= */
-constexpr uint32_t OPEN_DURATION        = 12000;           // ms — panel open run time
-constexpr uint32_t CLOSE_DURATION       = 12000;           // ms — panel close run time
+constexpr uint32_t OPEN_DURATION        = 4000;            // ms — panel open run time
+constexpr uint32_t CLOSE_DURATION       = 4000;            // ms — panel close run time
 constexpr uint32_t SERVO_TRACK_INTERVAL = 15UL * 60 * 1000;  // 15 min between tracking pulses
 constexpr float    SERVO_RPM            = 120.0f;            // your servo's speed — measure and adjust
 constexpr float    SERVO_TRACK_REVS     = 4.0f;              // revolutions per tracking pulse
