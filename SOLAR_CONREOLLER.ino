@@ -32,20 +32,41 @@ float ACS_OFFSET = 2.5f;
 float ACS_SENS   = 0.066f;
 
 /* ================= TIMINGS ================= */
-constexpr uint32_t OPEN_DURATION  = 12000;
-constexpr uint32_t CLOSE_DURATION = 12000;
+constexpr uint32_t OPEN_DURATION        = 12000;           // ms — panel open run time
+constexpr uint32_t CLOSE_DURATION       = 12000;           // ms — panel close run time
+constexpr uint32_t SERVO_TRACK_INTERVAL = 15UL * 60 * 1000;  // 15 min between tracking pulses
+constexpr float    SERVO_RPM            = 120.0f;            // your servo's speed — measure and adjust
+constexpr float    SERVO_TRACK_REVS     = 4.0f;              // revolutions per tracking pulse
+constexpr uint32_t SERVO_TRACK_DURATION =                    // auto-calculated from RPM
+  (uint32_t)((SERVO_TRACK_REVS / SERVO_RPM) * 60000.0f);    // = 4000 ms at 60 RPM
+constexpr uint32_t SEND_INTERVAL        = 100;             // ms between data transmissions
 
-/* ================= STATE ================= */
+/* ================= MOTOR STATE ================= */
+// Motor is only allowed to start from IDLE, preventing re-trigger during a run
+enum MotorState { MOTOR_IDLE, MOTOR_OPENING, MOTOR_CLOSING };
+MotorState    motorState = MOTOR_IDLE;
+unsigned long motorStopAt = 0;
+
+/* ================= FLAGS ================= */
+bool opened   = false;
+bool closed   = false;
+bool testMode = false;
+
+/* ================= SERVO ================= */
 Servo      servo;
 MotorL298N motorA(IN1, IN2, ENA, 20000, 8);
 
 bool servoForward = false;
 bool servoReverse = false;
-bool opened       = false;
-bool closed       = false;
-bool testMode     = false;
 
-unsigned long motorStopAt = 0;  // 0 = motor idle
+unsigned long lastServoTrack   = 0;   // millis() when last tracking pulse started
+unsigned long servoTrackStopAt = 0;   // 0 = not tracking
+
+/* ================= DATA SEND / RECONNECT ================= */
+unsigned long lastSendMs      = 0;
+unsigned long lastReconnectMs = 0;
+unsigned long lastRTCread     = 0;
+DateTime      cachedTime;
 
 /* ================= SETUP ================= */
 void setup() {
@@ -75,7 +96,13 @@ void setup() {
 /* ================= LOOP ================= */
 void loop() {
   motorA.update();
-  DateTime now = rtc.now();
+
+  /* Cache RTC — I2C read every 1s instead of every 10ms (100x less overhead) */
+  if (millis() - lastRTCread >= 1000) {
+    cachedTime  = rtc.now();
+    lastRTCread = millis();
+  }
+  DateTime& now = cachedTime;
 
   /* ===== RECEIVE COMMAND ===== */
   if (client.connected() && client.available()) {
@@ -95,52 +122,99 @@ void loop() {
     }
   }
 
-  /* ===== SERVO CONTROL ===== */
-  servo.write(servoForward ? 180 : servoReverse ? 0 : 90);
+  /* ===== MOTOR SCHEDULE ===== */
+  // Only allow a new command when motor has fully completed its previous run.
+  // This prevents testMode or rapid time-checks from re-triggering during a run.
+  if (motorState == MOTOR_IDLE) {
 
-  /* ===== MORNING OPEN ===== */
-  if ((testMode || (now.hour() == 1 && now.minute() == 42)) && !opened) {
-    motorA.setSpeed(100, true);
-    motorStopAt = millis() + OPEN_DURATION;
-    opened = true;
-    closed = false;
-  }
-
-  /* ===== EVENING CLOSE ===== */
-  if ((now.hour() == 1 && now.minute() == 44) && !closed) {
-    motorA.setSpeed(100, false);
-    motorStopAt = millis() + CLOSE_DURATION;
-    closed = true;
-    opened = false;
+    if ((testMode || (now.hour() == 1 && now.minute() == 42)) && !opened) {
+      motorA.setSpeed(100, true);
+      motorStopAt = millis() + OPEN_DURATION;
+      motorState  = MOTOR_OPENING;
+      Serial.println("Motor: OPENING");
+    }
+    else if ((now.hour() == 1 && now.minute() == 44) && !closed) {
+      motorA.setSpeed(100, false);
+      motorStopAt = millis() + CLOSE_DURATION;
+      motorState  = MOTOR_CLOSING;
+      Serial.println("Motor: CLOSING");
+    }
   }
 
   /* ===== MOTOR AUTO-STOP ===== */
+  // Flags are set HERE (after the run), not when the trigger fires.
+  // This matches physical reality — the panel is open/closed only after the motor finishes.
   if (motorStopAt && millis() >= motorStopAt) {
     motorA.stop();
     motorStopAt = 0;
+
+    if (motorState == MOTOR_OPENING) {
+      opened = true;
+      closed = false;
+      lastServoTrack = millis();  // start 15-min timer when panel opens
+      Serial.println("Motor: OPEN done");
+    } else if (motorState == MOTOR_CLOSING) {
+      closed  = true;
+      opened  = false;
+      servoTrackStopAt = 0;  // cancel any active tracking pulse
+      Serial.println("Motor: CLOSE done");
+    }
+
+    motorState = MOTOR_IDLE;
   }
 
-  /* ===== SENSOR READ ===== */
-  float voltage = analogRead(VOLT_PIN) * ADC_SCALE * VOLT_RATIO;
-  if (voltage < 0.5f) voltage = 0;
-
-  float batteryVoltage = analogRead(BATT_PIN) * ADC_SCALE * BAT_RATIO;
-  if (batteryVoltage < 0.5f) batteryVoltage = 0;
-
-  float current = (analogRead(CURR_PIN) * ADC_SCALE - ACS_OFFSET) / ACS_SENS;
-  if (current < 0.05f) current = 0;
-
-  float power = voltage * current;
-
-  /* ===== SEND DATA ===== */
-  if (!client.connected()) client.connect(receiverIP, receiverPort);
-  if (client.connected()) {
-    client.printf("%02d:%02d:%02d,%.2f,%.2f,%.2f,%.2f\n",
-                  now.hour(), now.minute(), now.second(),
-                  voltage, current, power, batteryVoltage);
+  /* ===== AUTO SERVO TRACKING (every 15 min while panel is open) ===== */
+  if (opened && !servoForward && !servoReverse) {
+    if (!servoTrackStopAt && millis() - lastServoTrack >= SERVO_TRACK_INTERVAL) {
+      servoTrackStopAt = millis() + SERVO_TRACK_DURATION;
+      lastServoTrack   = millis();
+      Serial.println("Servo: auto-track");
+    }
+  }
+  if (servoTrackStopAt && millis() >= servoTrackStopAt) {
+    servoTrackStopAt = 0;
   }
 
-  delay(100);
+  /* ===== SERVO CONTROL ===== */
+  // Priority: manual command > auto-track > stop
+  if (servoForward)          servo.write(180);  // manual forward
+  else if (servoReverse)     servo.write(0);    // manual reverse
+  else if (servoTrackStopAt) servo.write(180);  // auto sun-track pulse (adjust direction if needed)
+  else                       servo.write(90);   // stop
+
+  /* ===== WIFI RECONNECT ===== */
+  // Only attempt while motor is idle — client.connect() blocks for up to 500ms,
+  // which would prevent motorA.update() from running and stall the PWM ramp.
+  if (!client.connected() && motorState == MOTOR_IDLE) {
+    if (millis() - lastReconnectMs >= 5000) {
+      lastReconnectMs = millis();
+      client.connect(receiverIP, receiverPort, 500);  // 500ms timeout max
+    }
+  }
+
+  /* ===== SENSOR READ + SEND (every 100 ms) ===== */
+  if (millis() - lastSendMs >= SEND_INTERVAL) {
+    lastSendMs = millis();
+
+    float voltage = analogRead(VOLT_PIN) * ADC_SCALE * VOLT_RATIO;
+    if (voltage < 0.5f) voltage = 0;
+
+    float batteryVoltage = analogRead(BATT_PIN) * ADC_SCALE * BAT_RATIO;
+    if (batteryVoltage < 0.5f) batteryVoltage = 0;
+
+    float current = (analogRead(CURR_PIN) * ADC_SCALE - ACS_OFFSET) / ACS_SENS;
+    if (current < 0.05f) current = 0;
+
+    float power = voltage * current;
+
+    if (client.connected()) {
+      client.printf("%02d:%02d:%02d,%.2f,%.2f,%.2f,%.2f\n",
+                    now.hour(), now.minute(), now.second(),
+                    voltage, current, power, batteryVoltage);
+    }
+  }
+
+  delay(10);  // 10 ms loop — gives motorA.update() enough resolution for smooth ramping
 }
 
 /* ===== CURRENT SENSOR CALIBRATION ===== */
