@@ -112,27 +112,28 @@ void loop() {
     buf[len] = '\0';
 
     if (strcmp(buf, "SERVO_FWD") == 0) {
-      servoForward = !servoForward;
+      servoForward = true;
       servoReverse = false;
-      Serial.println(servoForward ? "Servo: FORWARD" : "Servo: STOP");
+      Serial.println("Servo: FORWARD");
 
     } else if (strcmp(buf, "SERVO_REV") == 0) {
-      servoReverse = !servoReverse;
+      servoReverse = true;
       servoForward = false;
-      Serial.println(servoReverse ? "Servo: REVERSE" : "Servo: STOP");
+      Serial.println("Servo: REVERSE");
+
+    } else if (strcmp(buf, "SERVO_STOP") == 0) {
+      servoForward = false;
+      servoReverse = false;
+      Serial.println("Servo: STOP");
 
     } else if (strcmp(buf, "MOTOR_FWD") == 0 || strcmp(buf, "PANEL_OPEN") == 0) {
-      // Manual open — overrides any running operation for immediate response
       motorStopAt = 0;
-      motorA.hardBrake();
       motorA.setSpeed(100, true);
       motorState = MOTOR_MANUAL;
       Serial.println("Motor: MANUAL FORWARD");
 
     } else if (strcmp(buf, "MOTOR_REV") == 0 || strcmp(buf, "PANEL_CLOSE") == 0) {
-      // Manual close — overrides any running operation
       motorStopAt = 0;
-      motorA.hardBrake();
       motorA.setSpeed(100, false);
       motorState = MOTOR_MANUAL;
       Serial.println("Motor: MANUAL REVERSE");

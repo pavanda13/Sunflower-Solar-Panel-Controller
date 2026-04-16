@@ -25,17 +25,19 @@ constexpr unsigned long DEBOUNCE         = 200;
 constexpr unsigned long DISPLAY_INTERVAL = 500;  // ms between display refreshes
 
 struct Button {
-  uint8_t      pin;
-  const char*  cmd;
+  uint8_t       pin;
+  const char*   cmdPress;    // sent on press
+  const char*   cmdRelease;  // sent on release
   unsigned long lastMs;
+  bool          wasPressed;
 };
 
 // Add or remove buttons here — no other code needs to change
 Button buttons[] = {
-  { 32, "SERVO_FWD",   0 },  // servo forward toggle
-  { 33, "SERVO_REV",   0 },  // servo reverse toggle
-  { 27, "PANEL_OPEN",  0 },  // DC motor — open panel
-  { 26, "PANEL_CLOSE", 0 },  // DC motor — close panel
+  { 32, "SERVO_FWD",   "SERVO_STOP", 0, false },  // hold = servo forward
+  { 33, "SERVO_REV",   "SERVO_STOP", 0, false },  // hold = servo reverse
+  { 27, "PANEL_OPEN",  "MOTOR_STOP", 0, false },  // hold = motor open
+  { 26, "PANEL_CLOSE", "MOTOR_STOP", 0, false },  // hold = motor close
 };
 constexpr int NUM_BUTTONS = sizeof(buttons) / sizeof(buttons[0]);
 
@@ -155,9 +157,20 @@ void loop() {
 
   /* ===== BUTTONS ===== */
   for (auto& b : buttons) {
-    if (digitalRead(b.pin) == LOW && millis() - b.lastMs > DEBOUNCE) {
+    bool pressed = digitalRead(b.pin) == LOW;
+
+    if (pressed && !b.wasPressed) {
+      // Press edge — debounced to ignore noise
+      if (millis() - b.lastMs > DEBOUNCE) {
+        b.lastMs = millis();
+        sendCmd(b.cmdPress);
+      }
+    } else if (!pressed && b.wasPressed) {
+      // Release edge — immediate, no debounce (stop right away)
+      sendCmd(b.cmdRelease);
       b.lastMs = millis();
-      sendCmd(b.cmd);
     }
+
+    b.wasPressed = pressed;
   }
 }
