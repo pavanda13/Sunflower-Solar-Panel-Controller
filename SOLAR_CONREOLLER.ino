@@ -121,24 +121,53 @@ void loop() {
       servoForward = false;
       Serial.println(servoReverse ? "Servo: REVERSE" : "Servo: STOP");
 
-    } else if (strcmp(buf, "MOTOR_FWD") == 0) {
-      if (motorState == MOTOR_IDLE) {
-        motorA.setSpeed(100, true);
-        motorState = MOTOR_MANUAL;
-        Serial.println("Motor: MANUAL FORWARD");
-      }
-    } else if (strcmp(buf, "MOTOR_REV") == 0) {
-      if (motorState == MOTOR_IDLE) {
+    } else if (strcmp(buf, "PANEL_TOGGLE") == 0) {
+      // Single-button toggle: open if closed/unknown, close if open
+      motorStopAt = 0;
+      motorA.hardBrake();
+      if (opened) {
         motorA.setSpeed(100, false);
-        motorState = MOTOR_MANUAL;
-        Serial.println("Motor: MANUAL REVERSE");
+        Serial.println("Motor: PANEL CLOSE (toggle)");
+      } else {
+        motorA.setSpeed(100, true);
+        Serial.println("Motor: PANEL OPEN (toggle)");
       }
+      motorState = MOTOR_MANUAL;
+
+    } else if (strcmp(buf, "MOTOR_FWD") == 0 || strcmp(buf, "PANEL_OPEN") == 0) {
+      // Manual open — overrides any running operation for immediate response
+      motorStopAt = 0;
+      motorA.hardBrake();
+      motorA.setSpeed(100, true);
+      motorState = MOTOR_MANUAL;
+      Serial.println("Motor: MANUAL FORWARD");
+
+    } else if (strcmp(buf, "MOTOR_REV") == 0 || strcmp(buf, "PANEL_CLOSE") == 0) {
+      // Manual close — overrides any running operation
+      motorStopAt = 0;
+      motorA.hardBrake();
+      motorA.setSpeed(100, false);
+      motorState = MOTOR_MANUAL;
+      Serial.println("Motor: MANUAL REVERSE");
+
     } else if (strcmp(buf, "MOTOR_STOP") == 0) {
       if (motorState == MOTOR_MANUAL) {
         motorA.stop();
         motorState = MOTOR_IDLE;
         Serial.println("Motor: MANUAL STOP");
       }
+
+    } else if (strcmp(buf, "RESET") == 0) {
+      // Emergency stop — halts everything and resets all state flags
+      motorStopAt    = 0;
+      motorState     = MOTOR_IDLE;
+      servoTrackStopAt = 0;
+      servoForward   = false;
+      servoReverse   = false;
+      opened         = false;
+      closed         = false;
+      motorA.hardBrake();
+      Serial.println("System: RESET");
     }
   }
 
