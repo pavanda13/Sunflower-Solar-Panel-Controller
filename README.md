@@ -56,13 +56,16 @@ A two-device ESP32 system that automatically opens and closes a solar panel like
 ### Hardware
 - ESP32 acting as a WiFi Access Point (`192.168.4.1:5000`)
 - OLED display showing live sensor values and time
-- 2 push buttons for manual servo control
+- 4 push buttons — 2 for servo control, 2 for DC motor control + 1 motor stop
 
 ### Button Behaviour
 | Button | Command Sent | Effect |
 |---|---|---|
 | Button 1 | `SERVO_FWD\n` | Toggle servo forward rotation (press again to stop) |
 | Button 2 | `SERVO_REV\n` | Toggle servo reverse rotation (press again to stop) |
+| Button 3 | `MOTOR_FWD\n` | Run DC motor forward — opens panel manually (only when motor is idle) |
+| Button 4 | `MOTOR_REV\n` | Run DC motor reverse — closes panel manually (only when motor is idle) |
+| Button 5 | `MOTOR_STOP\n` | Stop DC motor manual run |
 
 ---
 
@@ -96,6 +99,9 @@ Plain string over TCP:
 ```
 SERVO_FWD\n    — toggle servo forward
 SERVO_REV\n    — toggle servo reverse
+MOTOR_FWD\n    — run DC motor forward (manual open) — ignored if motor already running
+MOTOR_REV\n    — run DC motor reverse (manual close) — ignored if motor already running
+MOTOR_STOP\n   — stop DC motor manual run
 ```
 
 ---

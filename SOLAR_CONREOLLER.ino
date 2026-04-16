@@ -43,7 +43,7 @@ constexpr uint32_t SEND_INTERVAL        = 100;             // ms between data tr
 
 /* ================= MOTOR STATE ================= */
 // Motor is only allowed to start from IDLE, preventing re-trigger during a run
-enum MotorState { MOTOR_IDLE, MOTOR_OPENING, MOTOR_CLOSING };
+enum MotorState { MOTOR_IDLE, MOTOR_OPENING, MOTOR_CLOSING, MOTOR_MANUAL };
 MotorState    motorState = MOTOR_IDLE;
 unsigned long motorStopAt = 0;
 
@@ -115,10 +115,30 @@ void loop() {
       servoForward = !servoForward;
       servoReverse = false;
       Serial.println(servoForward ? "Servo: FORWARD" : "Servo: STOP");
+
     } else if (strcmp(buf, "SERVO_REV") == 0) {
       servoReverse = !servoReverse;
       servoForward = false;
       Serial.println(servoReverse ? "Servo: REVERSE" : "Servo: STOP");
+
+    } else if (strcmp(buf, "MOTOR_FWD") == 0) {
+      if (motorState == MOTOR_IDLE) {
+        motorA.setSpeed(100, true);
+        motorState = MOTOR_MANUAL;
+        Serial.println("Motor: MANUAL FORWARD");
+      }
+    } else if (strcmp(buf, "MOTOR_REV") == 0) {
+      if (motorState == MOTOR_IDLE) {
+        motorA.setSpeed(100, false);
+        motorState = MOTOR_MANUAL;
+        Serial.println("Motor: MANUAL REVERSE");
+      }
+    } else if (strcmp(buf, "MOTOR_STOP") == 0) {
+      if (motorState == MOTOR_MANUAL) {
+        motorA.stop();
+        motorState = MOTOR_IDLE;
+        Serial.println("Motor: MANUAL STOP");
+      }
     }
   }
 
