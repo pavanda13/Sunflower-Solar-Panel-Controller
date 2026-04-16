@@ -121,19 +121,6 @@ void loop() {
       servoForward = false;
       Serial.println(servoReverse ? "Servo: REVERSE" : "Servo: STOP");
 
-    } else if (strcmp(buf, "PANEL_TOGGLE") == 0) {
-      // Single-button toggle: open if closed/unknown, close if open
-      motorStopAt = 0;
-      motorA.hardBrake();
-      if (opened) {
-        motorA.setSpeed(100, false);
-        Serial.println("Motor: PANEL CLOSE (toggle)");
-      } else {
-        motorA.setSpeed(100, true);
-        Serial.println("Motor: PANEL OPEN (toggle)");
-      }
-      motorState = MOTOR_MANUAL;
-
     } else if (strcmp(buf, "MOTOR_FWD") == 0 || strcmp(buf, "PANEL_OPEN") == 0) {
       // Manual open — overrides any running operation for immediate response
       motorStopAt = 0;

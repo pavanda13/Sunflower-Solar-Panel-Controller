@@ -21,18 +21,23 @@ WiFiServer server(5000);
 WiFiClient client;
 
 /* ================= BUTTONS ================= */
-#define BTN_FORWARD      32   // servo forward toggle
-#define BTN_REVERSE      33   // servo reverse toggle
-#define BTN_PANEL_OPEN   27   // DC motor — open panel
-#define BTN_PANEL_CLOSE  26   // DC motor — close panel
+constexpr unsigned long DEBOUNCE         = 200;
+constexpr unsigned long DISPLAY_INTERVAL = 500;  // ms between display refreshes
 
-constexpr unsigned long DEBOUNCE = 200;
+struct Button {
+  uint8_t      pin;
+  const char*  cmd;
+  unsigned long lastMs;
+};
 
-// Each button gets its own timer — pressing one won't block the others
-unsigned long lastFwdBtn        = 0;
-unsigned long lastRevBtn        = 0;
-unsigned long lastPanelOpenBtn  = 0;
-unsigned long lastPanelCloseBtn = 0;
+// Add or remove buttons here — no other code needs to change
+Button buttons[] = {
+  { 32, "SERVO_FWD",   0 },  // servo forward toggle
+  { 33, "SERVO_REV",   0 },  // servo reverse toggle
+  { 27, "PANEL_OPEN",  0 },  // DC motor — open panel
+  { 26, "PANEL_CLOSE", 0 },  // DC motor — close panel
+};
+constexpr int NUM_BUTTONS = sizeof(buttons) / sizeof(buttons[0]);
 
 /* ================= DATA ================= */
 char  timeStr[9]     = "--:--:--";
@@ -40,6 +45,8 @@ float voltage        = 0;
 float current        = 0;
 float power          = 0;
 float batteryVoltage = 0;
+
+unsigned long lastDisplayMs = 0;
 
 /* ================= HELPERS ================= */
 void sendCmd(const char* cmd) {
@@ -50,11 +57,13 @@ void sendCmd(const char* cmd) {
   }
 }
 
-void updateDisplay() {
+void updateDisplay(bool connected) {
   display.clearDisplay();
 
   display.setCursor(0, 0);
-  display.println("SOLAR RECEIVER");
+  display.print("SOLAR");
+  display.setCursor(68, 0);
+  display.println(connected ? "  [LIVE]" : "[NO SIG]");
 
   display.setCursor(0, 12);
   display.print("Time: ");
@@ -63,22 +72,22 @@ void updateDisplay() {
   display.setCursor(0, 24);
   display.print("V: ");
   display.print(voltage, 1);
-  display.println(" V");
+  display.print("V");
 
   display.setCursor(64, 24);
   display.print("B: ");
   display.print(batteryVoltage, 1);
-  display.println(" V");
+  display.println("V");
 
-  display.setCursor(0, 40);
+  display.setCursor(0, 36);
   display.print("I: ");
   display.print(current, 2);
-  display.println(" A");
+  display.println("A");
 
-  display.setCursor(0, 54);
+  display.setCursor(0, 48);
   display.print("P: ");
   display.print(power, 1);
-  display.println(" W");
+  display.println("W");
 
   display.display();
 }
@@ -87,10 +96,7 @@ void updateDisplay() {
 void setup() {
   Serial.begin(9600);
 
-  pinMode(BTN_FORWARD,     INPUT_PULLUP);
-  pinMode(BTN_REVERSE,     INPUT_PULLUP);
-  pinMode(BTN_PANEL_OPEN,  INPUT_PULLUP);
-  pinMode(BTN_PANEL_CLOSE, INPUT_PULLUP);
+  for (auto& b : buttons) pinMode(b.pin, INPUT_PULLUP);
 
   Wire.begin(OLED_SDA, OLED_SCL);
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
@@ -114,14 +120,16 @@ void setup() {
 
 /* ================= LOOP ================= */
 void loop() {
+  bool connected = client && client.connected();
 
   /* ===== ACCEPT CLIENT ===== */
-  if (!client || !client.connected()) {
-    client = server.available();
+  if (!connected) {
+    client    = server.available();
+    connected = client && client.connected();
   }
 
   /* ===== RECEIVE SENSOR DATA ===== */
-  if (client && client.connected() && client.available()) {
+  if (connected && client.available()) {
     char buf[64];
     int len = client.readBytesUntil('\n', buf, sizeof(buf) - 1);
     if (len > 0 && buf[len - 1] == '\r') len--;
@@ -137,33 +145,19 @@ void loop() {
     if (tok) { current        = atof(tok); tok = strtok(NULL, ","); }
     if (tok) { power          = atof(tok); tok = strtok(NULL, ","); }
     if (tok) { batteryVoltage = atof(tok); }
-
-    updateDisplay();
   }
 
-  /* ===== BUTTON CONTROL ===== */
-
-  // Servo forward toggle — solar controller handles on/off state
-  if (digitalRead(BTN_FORWARD) == LOW && millis() - lastFwdBtn > DEBOUNCE) {
-    lastFwdBtn = millis();
-    sendCmd("SERVO_FWD");
+  /* ===== DISPLAY (every 500 ms) ===== */
+  if (millis() - lastDisplayMs >= DISPLAY_INTERVAL) {
+    lastDisplayMs = millis();
+    updateDisplay(connected);
   }
 
-  // Servo reverse toggle
-  if (digitalRead(BTN_REVERSE) == LOW && millis() - lastRevBtn > DEBOUNCE) {
-    lastRevBtn = millis();
-    sendCmd("SERVO_REV");
-  }
-
-  // DC motor — open panel
-  if (digitalRead(BTN_PANEL_OPEN) == LOW && millis() - lastPanelOpenBtn > DEBOUNCE) {
-    lastPanelOpenBtn = millis();
-    sendCmd("PANEL_OPEN");
-  }
-
-  // DC motor — close panel
-  if (digitalRead(BTN_PANEL_CLOSE) == LOW && millis() - lastPanelCloseBtn > DEBOUNCE) {
-    lastPanelCloseBtn = millis();
-    sendCmd("PANEL_CLOSE");
+  /* ===== BUTTONS ===== */
+  for (auto& b : buttons) {
+    if (digitalRead(b.pin) == LOW && millis() - b.lastMs > DEBOUNCE) {
+      b.lastMs = millis();
+      sendCmd(b.cmd);
+    }
   }
 }
