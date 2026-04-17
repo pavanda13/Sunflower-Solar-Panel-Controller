@@ -127,16 +127,18 @@ void loop() {
       Serial.println("Servo: STOP");
 
     } else if (strcmp(buf, "MOTOR_FWD") == 0 || strcmp(buf, "PANEL_OPEN") == 0) {
-      motorStopAt = 0;
-      motorA.setSpeed(100, true);
-      motorState = MOTOR_MANUAL;
-      Serial.println("Motor: MANUAL FORWARD");
+      if (motorState == MOTOR_IDLE) {
+        motorA.setSpeed(100, true);
+        motorState = MOTOR_MANUAL;
+        Serial.println("Motor: MANUAL FORWARD");
+      }
 
     } else if (strcmp(buf, "MOTOR_REV") == 0 || strcmp(buf, "PANEL_CLOSE") == 0) {
-      motorStopAt = 0;
-      motorA.setSpeed(100, false);
-      motorState = MOTOR_MANUAL;
-      Serial.println("Motor: MANUAL REVERSE");
+      if (motorState == MOTOR_IDLE) {
+        motorA.setSpeed(100, false);
+        motorState = MOTOR_MANUAL;
+        Serial.println("Motor: MANUAL REVERSE");
+      }
 
     } else if (strcmp(buf, "MOTOR_STOP") == 0) {
       if (motorState == MOTOR_MANUAL) {
