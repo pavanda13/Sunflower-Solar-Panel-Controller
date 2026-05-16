@@ -126,7 +126,11 @@ void loop() {
 
   /* ===== ACCEPT CLIENT ===== */
   if (!connected) {
-    client    = server.available();
+    WiFiClient incoming = server.available();
+    if (incoming) {
+      client = incoming;
+      client.setTimeout(50);  // prevent readBytesUntil from blocking >50ms on a partial packet
+    }
     connected = client && client.connected();
   }
 
@@ -160,17 +164,19 @@ void loop() {
     bool pressed = digitalRead(b.pin) == LOW;
 
     if (pressed && !b.wasPressed) {
-      // Press edge — debounced to ignore noise
+      // Press edge — debounced to ignore noise.
+      // wasPressed is only set TRUE here, so a rejected bounce does NOT
+      // leave wasPressed=true (which would fire a spurious release command).
       if (millis() - b.lastMs > DEBOUNCE) {
-        b.lastMs = millis();
+        b.lastMs     = millis();
+        b.wasPressed = true;
         sendCmd(b.cmdPress);
       }
     } else if (!pressed && b.wasPressed) {
       // Release edge — immediate, no debounce (stop right away)
+      b.wasPressed = false;
+      b.lastMs     = millis();
       sendCmd(b.cmdRelease);
-      b.lastMs = millis();
     }
-
-    b.wasPressed = pressed;
   }
 }

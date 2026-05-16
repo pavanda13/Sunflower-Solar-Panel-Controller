@@ -40,12 +40,14 @@ constexpr float    SERVO_TRACK_REVS     = 4.0f;              // revolutions per 
 constexpr uint32_t SERVO_TRACK_DURATION =                    // auto-calculated from RPM
   (uint32_t)((SERVO_TRACK_REVS / SERVO_RPM) * 60000.0f);    // = 4000 ms at 60 RPM
 constexpr uint32_t SEND_INTERVAL        = 100;             // ms between data transmissions
+constexpr uint32_t MANUAL_TIMEOUT       = 30000;           // ms — safety cut-off for manual motor run (WiFi dropout guard)
 
 /* ================= MOTOR STATE ================= */
 // Motor is only allowed to start from IDLE, preventing re-trigger during a run
 enum MotorState { MOTOR_IDLE, MOTOR_OPENING, MOTOR_CLOSING, MOTOR_MANUAL };
-MotorState    motorState = MOTOR_IDLE;
-unsigned long motorStopAt = 0;
+MotorState    motorState   = MOTOR_IDLE;
+unsigned long motorStopAt  = 0;
+unsigned long manualStopAt = 0;   // safety timeout for MOTOR_MANUAL — cleared by MOTOR_STOP or RESET
 
 /* ================= FLAGS ================= */
 bool opened   = false;
@@ -129,33 +131,41 @@ void loop() {
     } else if (strcmp(buf, "MOTOR_FWD") == 0 || strcmp(buf, "PANEL_OPEN") == 0) {
       if (motorState == MOTOR_IDLE) {
         motorA.setSpeed(100, true);
-        motorState = MOTOR_MANUAL;
+        motorState   = MOTOR_MANUAL;
+        manualStopAt = millis() + MANUAL_TIMEOUT;  // safety cut-off if WiFi drops
         Serial.println("Motor: MANUAL FORWARD");
       }
 
     } else if (strcmp(buf, "MOTOR_REV") == 0 || strcmp(buf, "PANEL_CLOSE") == 0) {
       if (motorState == MOTOR_IDLE) {
         motorA.setSpeed(100, false);
-        motorState = MOTOR_MANUAL;
+        motorState   = MOTOR_MANUAL;
+        manualStopAt = millis() + MANUAL_TIMEOUT;  // safety cut-off if WiFi drops
         Serial.println("Motor: MANUAL REVERSE");
       }
 
     } else if (strcmp(buf, "MOTOR_STOP") == 0) {
       if (motorState == MOTOR_MANUAL) {
         motorA.stop();
-        motorState = MOTOR_IDLE;
+        manualStopAt = 0;
+        motorState   = MOTOR_IDLE;
         Serial.println("Motor: MANUAL STOP");
       }
 
     } else if (strcmp(buf, "RESET") == 0) {
-      // Emergency stop — halts everything and resets all state flags
-      motorStopAt    = 0;
-      motorState     = MOTOR_IDLE;
+      // Emergency stop — mark aborted operation as done so schedule doesn't re-fire
+      // within the same trigger minute. opened/closed are NOT both cleared — that
+      // would let the schedule immediately re-trigger on the next loop iteration.
+      if      (motorState == MOTOR_OPENING) { opened = true;  closed = false; }
+      else if (motorState == MOTOR_CLOSING) { closed = true;  opened = false; }
+      // MOTOR_MANUAL or MOTOR_IDLE: flags reflect true physical state, leave unchanged
+
+      motorStopAt      = 0;
+      manualStopAt     = 0;
+      motorState       = MOTOR_IDLE;
       servoTrackStopAt = 0;
-      servoForward   = false;
-      servoReverse   = false;
-      opened         = false;
-      closed         = false;
+      servoForward     = false;
+      servoReverse     = false;
       motorA.hardBrake();
       Serial.println("System: RESET");
     }
@@ -183,8 +193,17 @@ void loop() {
   /* ===== MOTOR AUTO-STOP ===== */
   // Flags are set HERE (after the run), not when the trigger fires.
   // This matches physical reality — the panel is open/closed only after the motor finishes.
+
+  // Safety cut-off: kill manual run if WiFi dropped and MOTOR_STOP never arrived
+  if (motorState == MOTOR_MANUAL && manualStopAt && millis() >= manualStopAt) {
+    motorA.hardBrake();
+    manualStopAt = 0;
+    motorState   = MOTOR_IDLE;
+    Serial.println("Motor: MANUAL TIMEOUT (WiFi safety)");
+  }
+
   if (motorStopAt && millis() >= motorStopAt) {
-    motorA.stop();
+    motorA.hardBrake();  // immediate stop — prevents 5-second ramp-down window where motorState=IDLE but motor still spinning
     motorStopAt = 0;
 
     if (motorState == MOTOR_OPENING) {
